@@ -1,0 +1,35 @@
+###
+
+# curl 'http://localhost/phpmyadmin/index.php?route=/server/privileges&viewing_mode=server'
+#  -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+#  -H 'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+#  -H 'Cache-Control: max-age=0'
+#  -H 'Connection: keep-alive'
+#  -H 'Cookie: pma_lang=ru; phpMyAdmin=ui0n4vja7c67kd4krru92cag9l; pmaUser-1=dnH5gb1nEpt%2FMZvpmi70vIKsCoLgJwRw4UNNitBiF%2BaOpDP5QWcgWgb8nJM%3D; pmaAuth-1=eCvK4lIB3Suhi3p3puayphgtIDQTX8UEwhKm2NSmEKTUD26mCk7vEgXLfw7FN2Mo3wbfp38U2g%3D%3D'
+#  -H 'Sec-Fetch-Dest: document'
+#  -H 'Sec-Fetch-Mode: navigate'
+#  -H 'Sec-Fetch-Site: same-origin'
+#  -H 'Sec-Fetch-User: ?1'
+#  -H 'Upgrade-Insecure-Requests: 1'
+#  -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+#  -H 'sec-ch-ua: "Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"'
+#  -H 'sec-ch-ua-mobile: ?0'
+#  -H 'sec-ch-ua-platform: "Windows"'
+GET http://localhost/phpmyadmin/index.php?route=/server/privileges&viewing_mode=server
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7
+Cache-Control: max-age=0
+Connection: keep-alive
+Cookie: pma_lang=ru; phpMyAdmin=ui0n4vja7c67kd4krru92cag9l; pmaUser-1=dnH5gb1nEpt%2FMZvpmi70vIKsCoLgJwRw4UNNitBiF%2BaOpDP5QWcgWgb8nJM%3D; pmaAuth-1=eCvK4lIB3Suhi3p3puayphgtIDQTX8UEwhKm2NSmEKTUD26mCk7vEgXLfw7FN2Mo3wbfp38U2g%3D%3D
+Sec-Fetch-Dest: document
+Sec-Fetch-Mode: navigate
+Sec-Fetch-Site: same-origin
+Sec-Fetch-User: ?1
+Upgrade-Insecure-Requests: 1
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+sec-ch-ua: "Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+
+###
+
