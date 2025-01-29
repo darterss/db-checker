@@ -2,6 +2,7 @@ const cheerio = require('cheerio');
 
 // Распарсить HTML-таблицы из поля MESSAGE
 const parseHTMLMessage = (html) => {
+    if (typeof (html) !== 'string') return html;
     const $ = cheerio.load(html);
     const rows = [];
 
