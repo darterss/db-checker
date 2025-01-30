@@ -1,8 +1,8 @@
 const { parentPort } = require('worker_threads');
 const axios = require('axios');
-const config = require('./config');
+const config = require('../config');
 const logger = require('./logger');
-const { parseHTMLMessage } = require('./parser');
+const { parseHTMLMessage } = require('../parser');
 
 // Обработка задачи
 const executeQuery = async (query) => {
