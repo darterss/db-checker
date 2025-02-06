@@ -1,3 +1,5 @@
-192.168.1.1:8080
-192.168.1.2:8080:user1:pass1
-192.168.1.3:8080:user2:pass2
+45.86.163.132:18997:modeler_lTfZBG:EcYlYXSFYFeO
+45.86.163.132:18998:modeler_5p0RVl:zP9S9nyEApei
+45.86.163.132:18999:modeler_pdp0Db:BNRgrmpOVGTZ
+45.86.163.132:19000:modeler_FFrury:bV9NIvnSOuk1
+45.86.163.132:19001:modeler_XtTceU:GzernNpHOrQw
