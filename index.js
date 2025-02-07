@@ -105,19 +105,6 @@ class PmaClient {
         });
     }
 
-    ////////////////////////////////////////////////////////////////////////////////// временно, удалить
-    async checkProxy() {
-        try {
-            const s = (this.phpMyAdminUrl.split(':')[0].toLowerCase() === 'http') ? '' : 's';
-            const response = await this.axiosInstance.get(`http${s}://api.ipify.org?format=text`);
-            const proxyIP = response.data;
-            logger.info(`🔍 Проверка прокси для ${this.phpMyAdminUrl.split(':')[0]}: Используется IP ${proxyIP}`);
-            return response;
-        } catch (error) {
-            logger.warn(`⚠️ Не удалось проверить IP через прокси: ${error.message}`);
-        }
-    }
-
     updateCookies(newCookies) {
         if (!newCookies) return;
 
@@ -154,13 +141,6 @@ class PmaClient {
 
     // === Функция для авторизации при ['auth_type'] = 'cookie' ===
     loginAndGetCookies = async () => {
-
-        ////////////////////////////////////////////////////////////// временно, удалить проверка, что запрос идё через прокси
-        if (await this.checkProxy().then(res=>res.data.startsWith(this.proxy.split(':')[0]))) {
-            logger.info(`✅ Прокси активно (${this.proxy})`);
-        } else {
-            logger.warn(`⚠️ Прокси не работает, возможен прямой запрос!`);
-        }
 
         try {
             // Запрос к странице входа
@@ -380,6 +360,8 @@ fs.writeFileSync(foundColumnsFilePath, '');
 // Основной поток
 if (isMainThread) {
     (async () => {
+        const startTime = Date.now();
+
         const proxies = readProxies('./files/proxies.txt');
         const rawLines = readFileIfExists('./files/input.txt');
         const targets = new Set();
@@ -411,9 +393,9 @@ if (isMainThread) {
             const proxy = proxies[proxyIndex % proxies.length];
             proxyIndex++;
 
-            const worker = new Worker(__filename, {
-                workerData: { url, login, password, proxy, columnsToFind }
-            });
+            const workerData = { url, login, password, columnsToFind };
+            if (proxy) workerData.proxy = proxy;
+            const worker = new Worker(__filename, { workerData });
 
             workers.push(worker);
 
@@ -450,6 +432,10 @@ if (isMainThread) {
         } else {
             logger.warn('Нет данных для записи в all_tables.json');
         }
+        // Замеряем время выполнения
+        const endTime = Date.now();
+        const executionTime = (endTime - startTime) / 1000; // В секундах
+        logger.info(`Выполнение завершено за ${executionTime.toFixed(2)} секунд.`);
     })();
 } else {
     // Код для worker'а

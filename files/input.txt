@@ -1,4 +1,3 @@
-//http://localhost/phpmyadmin/:art:password1
 http://185.238.73.127/phpmyadmin/:s88:dgDHHMlj
 https://pma.maxcluster.net/c-1474/:db-user-1:TkKYesSFfPCunxMgzvXR
 https://pma.digiproduct.co.il/index.php:applumirlab1644448922:KbO4VU8wUWckrGvN
