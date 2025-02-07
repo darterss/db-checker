@@ -5,8 +5,13 @@ const winston = require("winston");
 const readline = require('readline');
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const ini = require("ini");
 
 const foundColumnsFilePath = './results/found_columns.txt';
+
+// Чтение конфигурации из config.ini
+const config = ini.parse(fs.readFileSync('./config.ini', 'utf-8'));
+const MAX_CONCURRENT_WORKERS = parseInt(config.settings.max_concurrent_workers, 10) || 5;
 
 // Настройка логгера
 const logger = winston.createLogger({
@@ -355,15 +360,33 @@ async function workerTask(workerData) {
 }
 
 // Очистка файла found_columns.txt при запуске программы
+if (!fs.existsSync('results'))
+    fs.mkdirSync('results', { recursive: true });
 fs.writeFileSync(foundColumnsFilePath, '');
 
 // Основной поток
 if (isMainThread) {
     (async () => {
+        // запрос данных от пользователя
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        const inputFile = await new Promise((resolve) => {
+            rl.question('Введите название файла с данными для поиска (в папке files) [по умолчанию input.txt]: ', (answer) => {
+                resolve(answer.trim() || 'input.txt');
+            });
+        });
+        const columnsToFind = await new Promise((resolve) => {
+            rl.question('Введите названия колонок для поиска (через запятую): ', resolve);
+        });
+        rl.close();
+
         const startTime = Date.now();
 
         const proxies = readProxies('./files/proxies.txt');
-        const rawLines = readFileIfExists('./files/input.txt');
+        const rawLines = readFileIfExists('./files/' + inputFile);
         const targets = new Set();
 
         for (const line of rawLines) {
@@ -373,23 +396,21 @@ if (isMainThread) {
             }
         }
 
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-
-        const columnsToFind = await new Promise((resolve) => {
-            rl.question('Введите названия колонок для поиска (через запятую): ', resolve);
-        });
-        rl.close();
-
         logger.info(`Поиск колонок: ${columnsToFind}`);
 
         const workers = [];
         let proxyIndex = 0;
         const results = [];
 
+        // Счётчик активных потоков
+        let activeWorkers = 0;
+
         for (const { url, login, password } of targets) {
+            // Ожидаем, пока количество активных потоков не станет меньше MAX_CONCURRENT_WORKERS
+            while (activeWorkers >= MAX_CONCURRENT_WORKERS) {
+                await new Promise(resolve => setTimeout(resolve, 100)); // Пауза перед следующей попыткой
+            }
+
             const proxy = proxies[proxyIndex % proxies.length];
             proxyIndex++;
 
@@ -397,7 +418,7 @@ if (isMainThread) {
             if (proxy) workerData.proxy = proxy;
             const worker = new Worker(__filename, { workerData });
 
-            workers.push(worker);
+            activeWorkers++;  // Увеличиваем счётчик активных потоков
 
             worker.on('message', (message) => {
                 logger.info(`Базы данных с ${JSON.stringify(message.url, null, 2)} обработаны`);
@@ -411,6 +432,8 @@ if (isMainThread) {
                 if (code !== 0) {
                     logger.error(`Worker остановлен с кодом выхода: ${code}`);
                 }
+
+                activeWorkers--;  // Уменьшаем счётчик активных потоков
             });
 
             worker.on('message', (entry) => {
@@ -418,6 +441,8 @@ if (isMainThread) {
                     results.push(entry);
                 }
             });
+
+            workers.push(worker);
         }
 
         // Ожидание завершения всех worker'ов
@@ -432,12 +457,15 @@ if (isMainThread) {
         } else {
             logger.warn('Нет данных для записи в all_tables.json');
         }
+
         // Замеряем время выполнения
         const endTime = Date.now();
         const executionTime = (endTime - startTime) / 1000; // В секундах
-        logger.info(`Выполнение завершено за ${executionTime.toFixed(2)} секунд.`);
+        logger.info(`Выполнение завершено за ${executionTime.toFixed(2)} сек.`);
     })();
-} else {
+}
+
+ else {
     // Код для worker'а
     workerTask(workerData)
         .then((entry) => {

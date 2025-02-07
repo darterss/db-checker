@@ -6,7 +6,7 @@ https://phpmyadmin.jungconnect.com.br/index.php:devei:devei
 https://phpmyadmin.jungconnect.com.br/index.php:artmoveis:e!V5rQtNPnWd
 http://185.238.73.127/phpmyadmin/:s88:dgDHHMlj
 https://phpmyadmin.jungconnect.com.br/:engebasedev:engebasedev
-https://citmalumnes.upc.es/phpmyadmin:jonathandr:45986634cae
+//https://citmalumnes.upc.es/phpmyadmin:jonathandr:45986634cae
 http://78.47.204.80/phpmyadmin/index.php:1124:ee8VB66ld2
 https://frx01.maennchen1.de:8080/phpmyadmin:c46_ikpe:@TH2s4aDRxdc
 https://linex.kjsoftwareinc.com/phpmyadmin/:root:aL5sWImNP8RvtzlK
