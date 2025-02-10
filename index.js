@@ -8,6 +8,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const ini = require("ini");
 
 const foundColumnsFilePath = './results/found_columns.txt';
+let whatNeeds = ''; // выбор вариантов обработок
 
 // Чтение конфигурации из config.ini
 const config = ini.parse(fs.readFileSync('./config.ini', 'utf-8'));
@@ -61,7 +62,6 @@ function parseLine(line) {
 }
 
 class PmaClient {
-
      phpMyAdminUrl;
      queryUrl;
      cookie;
@@ -232,7 +232,7 @@ class PmaClient {
                     Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
                         .filter(Boolean)
                         .join("; "),
-                    Authorization: this.encodedAuth,// for http type auth
+                    //Authorization: this.encodedAuth, // для авторизации при ['auth_type'] = 'http'
                     "X-Requested-With": "XMLHttpRequest"
                 },
             });
@@ -242,7 +242,7 @@ class PmaClient {
             const databases = $('table.table_results tbody tr').map((_, row) => {
                 return $(row).find('td').first().text().trim();
             }).get();
-            logger.info(`Найденные базы данных в ${this.phpMyAdminUrl} (${databases.length}): ${databases.join(", ")}`); //\x1b[32m${databases.join(", ")}\x1b[0m
+            //logger.info(`Найденные базы данных в ${this.phpMyAdminUrl} (${databases.length}): ${databases.join(", ")}`);
             return databases;
 
         } catch (error) {
@@ -272,7 +272,7 @@ class PmaClient {
                     Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
                         .filter(Boolean)
                         .join("; "),
-                    Authorization: this.encodedAuth,
+                    //Authorization: this.encodedAuth, // для авторизации при ['auth_type'] = 'http'
                     "X-Requested-With": "XMLHttpRequest"
                 },
             });
@@ -286,44 +286,11 @@ class PmaClient {
             return [];
         }
     }
-
-    // === Функция для получения списка всех таблиц ===
-    getAllTables = async (database) => {
-        try {
-            const response = await this.axiosInstance.post(this.queryUrl, new URLSearchParams({
-                token: this.token,
-                sql_query: `SHOW TABLES FROM \`${database}\``,
-                is_js_confirmed: "0",
-                ajax_request: "true",
-                _nocache: Date.now(),
-                goto: "server_sql.php",
-                ajax_page_request: true
-            }).toString(), {
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-                    Cookie: [this.cookie, this.pmaCookieVer, this.pma_collation_connection, this.pmaUser_1, this.pmaAuth_1]
-                        .filter(Boolean)
-                        .join("; "),
-                    Authorization: this.encodedAuth,
-                    "X-Requested-With": "XMLHttpRequest"
-                },
-            });
-            if (!response.data.success) throw new Error('Запрос не выполнен');
-            const $ = cheerio.load(response.data.message);
-            return $('table.table_results tbody tr').map((_, row) => {
-                return $(row).find('td').first().text().trim();
-            }).get();
-        } catch (error) {
-            logger.error(`Ошибка выполнения SQL-запроса getAllTables в ${database}: ${error.message}`);
-            return [];
-        }
-    }
 }
 
 // Функция для выполнения задачи в потоке
 async function workerTask(workerData) {
-    const { url, login, password, proxy, columnsToFind } = workerData;
+    const { url, login, password, proxy, columnsToFind, whatNeeds } = workerData;
     const client = new PmaClient(url, login, password, proxy);
 
     if (await client.loginAndGetCookies()) {
@@ -334,35 +301,41 @@ async function workerTask(workerData) {
             password: password,
             databases: {}
         };
+        logger.info(`Найденные базы данных в ${client.phpMyAdminUrl} (${databases.length}): ${databases.join(", ")}`);
 
         for (const database of databases) {
             // Поиск колонок
-            const foundColumns = await client.findColumnsInTables(database, columnsToFind);
-            if (foundColumns.length > 0) {
-                foundColumns.forEach((column) => {
-                    fs.appendFileSync(foundColumnsFilePath, `${url}:${login}:${password}|${column}\n`);
-                });
+            if (whatNeeds === '1' || whatNeeds === 'both') {
+                const foundColumns = await client.findColumnsInTables(database, columnsToFind);
+                if (foundColumns.length > 0) {
+                    foundColumns.forEach((column) => {
+                        fs.appendFileSync(foundColumnsFilePath, `${url}:${login}:${password}|${column}\n`);
+                    });
+                }
             }
 
             // Получение списка таблиц
-            const tables = await client.getAllTables(database);
-            if (tables.length > 0) {
-                entry.databases[database] = tables; // Добавляем таблицы в базу данных
+            if (whatNeeds === '2' || whatNeeds === 'both') {
+                const tables = await client.executeSQLQuery(`SHOW TABLES FROM \`${database}\``);
+                if (tables.length > 0) {
+                    entry.databases[database] = tables; // Добавляем таблицы в базу данных
+                }
             }
-        }
 
-        // Если найдены таблицы, возвращаем результат
-        if (Object.keys(entry.databases).length > 0) {
-            return entry;
+            // Если найдены таблицы, возвращаем результат
+            if (Object.keys(entry.databases).length > 0) {
+                return entry;
+            }
         }
     }
     return null;
 }
 
-// Очистка файла found_columns.txt при запуске программы
+// Очистка файлов с результатами при запуске программы
 if (!fs.existsSync('results'))
     fs.mkdirSync('results', { recursive: true });
 fs.writeFileSync(foundColumnsFilePath, '');
+fs.writeFileSync('./results/all_tables.json', '[]');
 
 // Основной поток
 if (isMainThread) {
@@ -378,9 +351,22 @@ if (isMainThread) {
                 resolve(answer.trim() || 'input.txt');
             });
         });
-        const columnsToFind = await new Promise((resolve) => {
-            rl.question('Введите названия колонок для поиска (через запятую): ', resolve);
+
+        whatNeeds = await new Promise((resolve) => {
+            rl.question('Выберите нужный вариант: \n' +
+                '1 - Поиск по названию колонок внутри таблиц\n' +
+                '2 - Получение списка всех таблиц внутри всех баз данных\n' +
+                'Ничего не вводите, если требуется выполнить оба варианта\n', resolve);
         });
+        whatNeeds = whatNeeds.trim() || 'both';
+
+        let columnsToFind = '';
+        if (whatNeeds === '1' || whatNeeds === 'both') {
+            columnsToFind = await new Promise((resolve) => {
+                rl.question('Введите названия колонок для поиска (через запятую): ', resolve);
+            });
+        }
+
         rl.close();
 
         const startTime = Date.now();
@@ -395,8 +381,6 @@ if (isMainThread) {
                 targets.add(parsed);
             }
         }
-
-        logger.info(`Поиск колонок: ${columnsToFind}`);
 
         const workers = [];
         let proxyIndex = 0;
@@ -414,7 +398,7 @@ if (isMainThread) {
             const proxy = proxies[proxyIndex % proxies.length];
             proxyIndex++;
 
-            const workerData = { url, login, password, columnsToFind };
+            const workerData = { url, login, password, columnsToFind, whatNeeds };
             if (proxy) workerData.proxy = proxy;
             const worker = new Worker(__filename, { workerData });
 
@@ -451,11 +435,16 @@ if (isMainThread) {
         })));
 
         // Запись результатов в JSON-файл
-        if (results.length > 0) {
-            fs.writeFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
-            logger.info(`Результаты записаны в all_tables.json и found_columns.txt`);
-        } else {
-            logger.warn('Нет данных для записи в all_tables.json');
+        if (whatNeeds === '2' || whatNeeds === 'both') {
+            if (results.length > 0) {
+                fs.writeFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
+                logger.info(`Результаты записаны в all_tables.json, в папку Results`);
+            } else {
+                logger.warn('Нет данных для записи в all_tables.json');
+            }
+        }
+        if (whatNeeds === '1' || whatNeeds === 'both') {
+            logger.info(`Результаты записаны в found_columns.txt, в папку Results`);
         }
 
         // Замеряем время выполнения
