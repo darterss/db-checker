@@ -22,13 +22,9 @@ function parseLine(line) {
     return null;
 }
 
-// Очистка файлов с предыдущими результатами при запуске программы
-clearResults();
-
 // Основной поток
 if (isMainThread) {
     (async () => {
-        // запрос данных от пользователя
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
@@ -55,9 +51,26 @@ if (isMainThread) {
             });
         }
 
+        await new Promise((resolve) => {
+            rl.question('Очистить данные предыдущих запросов из папок Results и Logs? (введите "y" для удаления)', (answer) => {
+                if (answer.trim() === 'y') {
+                    clearResults();
+                }
+                resolve();
+            });
+        });
+
         rl.close();
 
         const startTime = Date.now();
+
+        // Вывод динамических данных в консоль
+        let processedLines = 0;
+        let activeWorkers = 0;
+        const interval = setInterval(() => {
+            const currentTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            console.log(`[${currentTime}] Строк пройдено: ${processedLines}/${targets.size} Потоки ${activeWorkers}/${MAX_CONCURRENT_WORKERS}`);
+        }, 5000);
 
         const proxies = readProxies('./files/proxies.txt');
         const rawLines = readFileIfExists('./files/' + inputFile);
@@ -74,13 +87,9 @@ if (isMainThread) {
         let proxyIndex = 0;
         const results = [];
 
-        // Счётчик активных потоков
-        let activeWorkers = 0;
-
         for (const { url, login, password } of targets) {
-            // Ожидаем, пока количество активных потоков не станет меньше MAX_CONCURRENT_WORKERS
             while (activeWorkers >= MAX_CONCURRENT_WORKERS) {
-                await new Promise(resolve => setTimeout(resolve, 100)); // Пауза перед следующей попыткой
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
 
             const proxy = proxies[proxyIndex % proxies.length];
@@ -90,60 +99,75 @@ if (isMainThread) {
             if (proxy) workerData.proxy = proxy;
             const worker = new Worker(__filename, { workerData });
 
-            activeWorkers++;  // Увеличиваем счётчик активных потоков
+            activeWorkers++;
 
-            worker.on('message', (message) => {
-                logger.info(`Базы данных с ${JSON.stringify(message.url, null, 2)} обработаны`);
-            });
+            workers.push(new Promise((resolve) => {
+                worker.on('message', (message) => {
+                    if (message) {
+                        results.push(message);
+                    }
+                });
 
-            worker.on('error', (error) => {
-                logger.error(`Worker ошибка: ${error.message}`);
-            });
+                worker.on('error', (error) => {
+                    logger.error(`Worker ошибка: ${error.message}`);
+                });
 
-            worker.on('exit', (code) => {
-                if (code !== 0) {
-                    logger.error(`Worker остановлен с кодом выхода: ${code}`);
-                }
+                worker.on('exit', (code) => {
+                    if (code !== 0) {
+                        logger.error(`Worker остановлен с кодом выхода: ${code}`);
+                    }
 
-                activeWorkers--;  // Уменьшаем счётчик активных потоков
-            });
+                    activeWorkers--;
+                    processedLines++;
 
-            worker.on('message', (entry) => {
-                if (entry) {
-                    results.push(entry);
-                }
-            });
+                    if (processedLines >= targets.size) {
+                        clearInterval(interval);
+                    }
 
-            workers.push(worker);
+                    resolve();
+                });
+            }));
         }
 
-        // Ожидание завершения всех worker'ов
-        await Promise.all(workers.map(worker => new Promise((resolve) => {
-            worker.on('exit', resolve);
-        })));
+        // Ждём завершения всех воркеров
+        await Promise.all(workers);
 
-        // Запись результатов в JSON-файл
+        // Запись результатов
         if (whatNeeds === '2' || whatNeeds === 'both') {
             if (results.length > 0) {
-                fs.writeFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
-                logger.info(`Результаты записаны в all_tables.json, в папку Results`);
+                fs.appendFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
+
+                let output = "";
+                results.forEach((item) => {
+                    output += `${item.url}:${item.login}:${item.password}\n`;
+                    for (const [dbName, tables] of Object.entries(item.databases)) {
+                        output += `          ${dbName}\n`;
+                        tables.forEach((table) => {
+                            output += `               ${table}\n`;
+                        });
+                    }
+                });
+                fs.appendFileSync('./results/all_tables.txt', output);
+                logger.info(`Результаты записаны в all_tables, в папку Results`);
+                console.log(`Результаты записаны в all_tables, в папку Results`);
             } else {
                 logger.warn('Нет данных для записи в all_tables.json');
             }
         }
         if (whatNeeds === '1' || whatNeeds === 'both') {
             logger.info(`Результаты записаны в found_columns.txt, в папку Results`);
+            console.log(`Результаты записаны в found_columns.txt, в папку Results`);
         }
 
         // Замеряем время выполнения
         const endTime = Date.now();
-        const executionTime = (endTime - startTime) / 1000; // В секундах
+        const executionTime = (endTime - startTime) / 1000;
         logger.info(`Выполнение завершено за ${executionTime.toFixed(2)} сек.`);
+        console.log(`Выполнение завершено за ${executionTime.toFixed(2)} сек.`);
     })();
 }
 
- else {
-    // Код для worker'а
+else {
     workerTask(workerData)
         .then((entry) => {
             if (entry) {
@@ -152,5 +176,8 @@ if (isMainThread) {
         })
         .catch(err => {
             logger.error(`Worker error: ${err.message}`);
+        })
+        .finally(() => {
+            parentPort.close();
         });
 }

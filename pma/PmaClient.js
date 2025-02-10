@@ -2,6 +2,7 @@ const {HttpsProxyAgent} = require("https-proxy-agent");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const logger = require("../utils/logger");
+const https = require("https");
 
 class PmaClient {
     phpMyAdminUrl;
@@ -44,10 +45,11 @@ class PmaClient {
         });
 
         // экземпляр axios с прокси
+
         this.axiosInstance = axios.create({
             validateStatus: () => true, // Игнорируем ошибки ответа
             proxy: isHTTP && this.proxyConfig,
-            httpsAgent,    // для https
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),    // для https
             timeout: 5000,
         });
     }
@@ -92,7 +94,7 @@ class PmaClient {
         try {
             // Запрос к странице входа
             const response = await this.axiosInstance.get(this.phpMyAdminUrl, {
-                headers: {"User-Agent": "Mozilla/5.0"},
+                //headers: {"User-Agent": "Mozilla/5.0"},
             });
             // Получаем куки из ответа
             const rawCookies = response.headers["set-cookie"];
@@ -151,7 +153,7 @@ class PmaClient {
             logger.info(`Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
             return true;
         } catch (error) {
-            logger.error(`❌ Ошибка авторизации (${this.login}:${this.password}) → ${error.message}\n${error.stack}`);
+            logger.error(`❌ Ошибка авторизации (${this.phpMyAdminUrl}:${this.login}:${this.password}) → ${error.message}\n`);
             return false;
         }
     };
