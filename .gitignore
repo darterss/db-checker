@@ -1,6 +1,6 @@
-.idea
-/temp
-/node_modules
-/logs
-/results
-/input
+/.idea/
+/temp/
+/node_modules/
+/logs/
+/results/
+/input/

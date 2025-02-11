@@ -135,7 +135,7 @@ if (isMainThread) {
         // Запись результатов
         if (whatNeeds === '2' || whatNeeds === 'both') {
             if (results.length > 0) {
-                fs.appendFileSync('./results/all_tables.json', JSON.stringify(results, null, 2));
+                fs.appendFileSync('./results/all_tables.json', JSON.stringify(results, null, 2) + ',\n');
 
                 let output = "";
                 results.forEach((item) => {

@@ -15,7 +15,7 @@ async function workerTask(workerData) {
             databases: {}
         };
         if (!databases || !Array.isArray(databases)) {
-            logger.error("❌ Ошибка: databases не массив!");
+            logger.error(`❌ Ошибка в ${client.phpMyAdminUrl}: databases не массив: ${databases}`);
             return null;
         }
 
@@ -42,11 +42,10 @@ async function workerTask(workerData) {
                     entry.databases[database] = tables; // Добавляем таблицы в базу данных
                 }
             }
-
-            // Если найдены таблицы, возвращаем результат
-            if (Object.keys(entry.databases).length > 0) {
-                return entry;
-            }
+        }
+        // Если найдены таблицы, возвращаем результат
+        if (Object.keys(entry.databases).length > 0) {
+            return entry;
         }
     }
     return null;

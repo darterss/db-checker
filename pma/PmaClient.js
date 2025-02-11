@@ -159,6 +159,9 @@ class PmaClient {
                 }
             }
             logger.info(`Авторизация успешна (${this.phpMyAdminUrl}:${this.login}:${this.password}).`);
+           /* console.log(this.phpMyAdminUrl + ' : ' +this.pmaAuth_1)
+            console.log(this.phpMyAdminUrl + ' : ' +this.pmaUser_1)
+            console.log('\n')*/
             return true;
         } catch (error) {
             logger.error(`❌ Ошибка авторизации (${this.phpMyAdminUrl}:${this.login}:${this.password}) → ${error.message}\n`);
