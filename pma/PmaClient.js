@@ -78,7 +78,13 @@ class PmaClient {
                 this[key] = cookieValue;
             }
         });
-        this.session = this.cookie.replace(/phpMyAdmin(_https)?=/, "");
+        if (typeof this.cookie === 'string') {
+            this.session = this.cookie.replace(/phpMyAdmin(_https)?=/, "");
+        } else {
+            logger.warn(`Куки не получены для ${this.phpMyAdminUrl}, возможно, авторизация не удалась.`);
+            this.session = "";
+        }
+
     }
 
     updateToken(html) {
@@ -131,10 +137,12 @@ class PmaClient {
 
             // ищем токен в Headers.Location
             const location = loginResponse.headers?.location;
-            if (location.includes('token=')) {
+            // Проверяем, есть ли location и является ли он строкой
+            if (typeof location === 'string' && location.includes('token=')) {
                 const tokenMatch = location.match(/[?&]token=([^&]+)/);
                 this.token = tokenMatch ? tokenMatch[1] : undefined;
-            } else {
+            }
+            else {
                 //если нет в Location - делаем Get запрос
                 const response1 = await this.axiosInstance.get(this.phpMyAdminUrl, {
                     headers: {
@@ -180,7 +188,12 @@ class PmaClient {
                     "X-Requested-With": "XMLHttpRequest"
                 },
             });
-            if (!response.data.success) throw new Error ('Запрос не выполнен')
+            if (!response.data.success) throw new Error (`Запрос executeSQLQuery к ${this.phpMyAdminUrl} не выполнен`)
+           /* this.updateToken(response.data);
+            const cookies = response.headers['set-cookie']
+            if (cookies) {
+                this.updateCookies(cookies)
+            }*/
             // Обрабатываем HTML-ответ
             const $ = cheerio.load(response.data.message);
             return $('table.table_results tbody tr').map((_, row) => {

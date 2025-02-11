@@ -14,6 +14,11 @@ async function workerTask(workerData) {
             password: password,
             databases: {}
         };
+        if (!databases || !Array.isArray(databases)) {
+            logger.error("❌ Ошибка: databases не массив!");
+            return null;
+        }
+
         logger.info(`Найденные базы данных в ${client.phpMyAdminUrl} (${databases.length}): ${databases.join(", ")}`);
 
         for (const database of databases) {
