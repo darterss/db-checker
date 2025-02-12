@@ -15,22 +15,26 @@ async function workerTask(workerData) {
             databases: {}
         };
         if (!databases || !Array.isArray(databases)) {
-            logger.error(`❌ Ошибка в ${client.phpMyAdminUrl}: databases не массив: ${databases}`);
             return null;
         }
 
         logger.info(`Найденные базы данных в ${client.phpMyAdminUrl} (${databases.length}): ${databases.join(", ")}`);
 
+        const uniqueColumns = new Set();
+
         for (const database of databases) {
+            if (!database) continue;
+
             // Поиск колонок
             if (whatNeeds === '1' || whatNeeds === 'both') {
                 const columnsToSearch = columnsToFind.split(',').map(col => col.trim());
                 const likeConditions = columnsToSearch.map(col => `COLUMN_NAME LIKE '%${col}%'`).join(' OR ');
                 const foundColumns = await client.executeSQLQuery
                     (`SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${database}' AND (${likeConditions})`)
+                if (!foundColumns) continue;
                 if (foundColumns.length > 0) {
                     foundColumns.forEach((column) => {
-                        fs.appendFileSync('./results/found_columns.txt', `${url}:${login}:${password}|${column}\n`);
+                        foundColumns.forEach((column) => uniqueColumns.add(column));
                     });
                 }
             }
@@ -38,10 +42,17 @@ async function workerTask(workerData) {
             // Получение списка таблиц
             if (whatNeeds === '2' || whatNeeds === 'both') {
                 const tables = await client.executeSQLQuery(`SHOW TABLES FROM \`${database}\``);
+                if (!tables) {
+                    continue;
+                }
                 if (tables.length > 0) {
                     entry.databases[database] = tables; // Добавляем таблицы в базу данных
                 }
             }
+        }
+        // Запись уникальных колонок в файл
+        if (uniqueColumns.size > 0) {
+            fs.appendFileSync('./results/found_columns.txt', [...uniqueColumns].map(column => `${url}:${login}:${password}|${column}`).join("\n") + "\n");
         }
         // Если найдены таблицы, возвращаем результат
         if (Object.keys(entry.databases).length > 0) {

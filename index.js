@@ -132,7 +132,7 @@ if (isMainThread) {
         // Ждём завершения всех воркеров
         await Promise.all(workers);
 
-        // Запись результатов
+        // Запись результатов в файлы
         if (whatNeeds === '2' || whatNeeds === 'both') {
             if (results.length > 0) {
                 fs.appendFileSync('./results/all_tables.json', JSON.stringify(results, null, 2) + ',\n');
@@ -155,8 +155,8 @@ if (isMainThread) {
             }
         }
         if (whatNeeds === '1' || whatNeeds === 'both') {
-            logger.info(`Результаты записаны в found_columns.txt, в папку Results`);
-            console.log(`Результаты записаны в found_columns.txt, в папку Results`);
+            logger.info(`Найденные результаты записаны в found_columns.txt, в папку Results`);
+            console.log(`Найденные результаты записаны в found_columns.txt, в папку Results`);
         }
 
         // Замеряем время выполнения
